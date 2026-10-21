@@ -103,6 +103,10 @@ explicitly asked.
 - Anthropic API key in `.env` (never commit it; `.env` is in `.gitignore`)
 - Simple UI last (Streamlit or similar)
 
+## Build plan
+The phased build plan lives in `docs/PLAN.md`. Read it at the start of each
+session; mark a phase done only after I confirm it works.
+
 ## How to work with me
 
 - I'm learning agentic coding. Before writing code, explain your plan in
