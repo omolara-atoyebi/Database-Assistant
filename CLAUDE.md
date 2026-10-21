@@ -20,9 +20,22 @@ The deliverable is the app: UI → backend pipeline → Claude API + MCP server
 
 ## Project state
 
-No application code, build system or test suite yet. The repo holds the
-dataset (`data/analytics.db`) and the design diagram (`docs/process_flow.png`).
-Don't invent build/test commands; add them here once tooling exists.
+Built phase by phase per `docs/PLAN.md`; check its status list for what exists.
+Code lives in the `db_assistant/` package; settings (DB path, allowed tables,
+row limit, timeout, model) live in `db_assistant/config.py`.
+
+## Commands
+
+Requires Python 3.10+ (the MCP SDK needs it). The system `python3` is 3.9, so
+the venv is built from Homebrew's 3.12.
+
+```bash
+/opt/homebrew/bin/python3.12 -m venv .venv   # one-time setup
+source .venv/bin/activate
+pip install -e ".[dev]"                      # add ",ui" for Streamlit (Phase 10)
+pytest                                       # all tests
+pytest tests/test_smoke.py::test_database_file_exists   # a single test
+```
 
 ## Pipeline
 
@@ -116,3 +129,4 @@ session; mark a phase done only after I confirm it works.
 - Write tests for guardrails (e.g. DROP/UPDATE rejected, row limit enforced).
 - Keep code simple and readable over clever.
 - When I correct a mistake, suggest a line to add to this file.
+- Never commit or create branches. I commit myself, on main. Leave changes for me to review.

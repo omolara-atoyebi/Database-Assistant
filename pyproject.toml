@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "db-assistant"
+version = "0.1.0"
+description = "Natural-language-to-SQL assistant over a SQLite analytics database"
+requires-python = ">=3.10"
+dependencies = [
+    "anthropic",
+    "mcp",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+ui = ["streamlit"]
+
+[tool.setuptools.packages.find]
+include = ["db_assistant*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
