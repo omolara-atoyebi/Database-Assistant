@@ -6,7 +6,7 @@ phase only after it has been confirmed working.
 ## Status
 
 - [x] Phase 0: Project setup
-- [ ] Phase 1: Read-only database layer + guardrails (pytest)
+- [x] Phase 1: Read-only database layer + guardrails (pytest)
 - [ ] Phase 2: MCP server
 - [ ] Phase 3: Test by hand with MCP Inspector
 - [ ] Phase 4: Connect to Claude Code and ask questions in plain language
