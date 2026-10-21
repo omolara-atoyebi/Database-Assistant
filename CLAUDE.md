@@ -79,6 +79,12 @@ Guardrails are enforced **in the server**, not the prompt: SELECT-only, table
 whitelist, column validation, row limit, timeout. The prompt can ask for safe
 SQL, but the server must reject unsafe SQL regardless.
 
+The installed MCP SDK is **2.x**: `FastMCP` is now `MCPServer`
+(`from mcp.server.mcpserver import MCPServer`); most online examples use the
+1.x names. Tool failures must raise `ToolError` (the client gets the message);
+any other exception reaches the client only as "Error executing tool". Tests
+connect in-process with `mcp.Client(server)` and use `pytest.mark.anyio`.
+
 ## Working with the database
 
 ```bash
@@ -130,3 +136,6 @@ session; mark a phase done only after I confirm it works.
 - Keep code simple and readable over clever.
 - When I correct a mistake, suggest a line to add to this file.
 - Never commit or create branches. I commit myself, on main. Leave changes for me to review.
+- Error messages are read by the runtime LLM: always name what failed
+  and what is allowed.
+- MCP tool errors must be raised as ToolError, or the message is lost.
