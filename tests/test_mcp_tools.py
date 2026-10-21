@@ -137,3 +137,28 @@ async def test_server_runs_as_a_process_over_stdio():
         result = await client.call_tool("run_query", {"sql": "SELECT COUNT(*) FROM customers"})
     assert len(tools) == 3
     assert result.structured_content["rows"] == [[30]]
+
+
+@pytest.mark.parametrize("mode", ["auto", "legacy"])
+async def test_rejected_queries_return_promptly_over_stdio(mode):
+    # Regression check for the Phase 3 report that rejected queries hang in
+    # MCP Inspector. A hang fails here after 10s instead of the 60s client
+    # default. Runs on both the newest protocol ("auto") and the older one.
+    params = StdioServerParameters(
+        command=sys.executable,
+        args=["-m", "db_assistant.mcp_server.server"],
+        cwd=str(config.PROJECT_ROOT),
+    )
+    async with Client(params, mode=mode, read_timeout_seconds=10) as client:
+        insert = await client.call_tool(
+            "run_query", {"sql": "INSERT INTO customers VALUES (99, 'x', 'US', '2025-01-01')"}
+        )
+        unknown_table = await client.call_tool("run_query", {"sql": "SELECT * FROM invoices"})
+        after = await client.call_tool("run_query", {"sql": "SELECT COUNT(*) FROM products"})
+
+    assert "Rejected:" in error_text(insert)
+    assert "INSERT" in error_text(insert)
+    assert "Rejected:" in error_text(unknown_table)
+    assert "invoices" in error_text(unknown_table)
+    # The server still responds after the errors.
+    assert after.structured_content["rows"] == [[10]]

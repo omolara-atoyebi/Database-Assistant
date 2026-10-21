@@ -7,7 +7,7 @@ phase only after it has been confirmed working.
 
 - [x] Phase 0: Project setup
 - [x] Phase 1: Read-only database layer + guardrails (pytest)
-- [ ] Phase 2: MCP server
+- [x] Phase 2: MCP server
 - [ ] Phase 3: Test by hand with MCP Inspector
 - [ ] Phase 4: Connect to Claude Code and ask questions in plain language
 - [ ] Phase 5: LLM client + schema context + few-shot examples
@@ -135,11 +135,16 @@ call the real API.
 - **Goal:** see and use the server's tools in a browser, the way an MCP client would.
 - **Files:** none, except notes in `README.md`.
 - **Run/test:** `npx @modelcontextprotocol/inspector .venv/bin/python -m db_assistant.mcp_server.server` (needs Node.js). In the browser: Connect, then Tools, then call each tool.
+- **Known Inspector bug:** the web UI (2.10.1 and 2.11.0) drops every tool result with `isError: true` and times out after 60s. The server replies correctly within milliseconds (confirmed with a stdio wiretap and `test_rejected_queries_return_promptly_over_stdio`). Check the error cases with Inspector's CLI mode instead:
+  ```bash
+  npx @modelcontextprotocol/inspector --cli .venv/bin/python -m db_assistant.mcp_server.server --method tools/call --tool-name run_query --tool-arg "sql=DELETE FROM orders"
+  npx @modelcontextprotocol/inspector --cli .venv/bin/python -m db_assistant.mcp_server.server --method tools/call --tool-name run_query --tool-arg "sql=SELECT * FROM sqlite_master"
+  ```
 - **Done when:** you have checked that (this is the real proof of the server's guardrails, because you send the SQL directly with no LLM in between):
-  - All three tools are listed with descriptions.
-  - `describe_table orders` shows the columns.
-  - A `SELECT` returns rows.
-  - `DELETE FROM orders` and `SELECT * FROM sqlite_master` are both rejected with a readable message.
+  - All three tools are listed with descriptions (web UI).
+  - `describe_table orders` shows the columns (web UI).
+  - A `SELECT` returns rows (web UI).
+  - `DELETE FROM orders` and `SELECT * FROM sqlite_master` are both rejected with a readable message (CLI: `"isError": true` and a `Rejected:` message listing the allowed tables).
 
 ### Phase 4: Connect to Claude Code and ask questions in plain language
 - **Goal:** prove the server is useful to an LLM before writing any pipeline code. Claude Code acts as a stand-in client here; it is not part of the product.

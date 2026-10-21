@@ -85,6 +85,10 @@ The installed MCP SDK is **2.x**: `FastMCP` is now `MCPServer`
 any other exception reaches the client only as "Error executing tool". Tests
 connect in-process with `mcp.Client(server)` and use `pytest.mark.anyio`.
 
+MCP Inspector web UI (2.10–2.11) drops tool results with `isError: true` and
+times out after 60s; the server is fine. Check error cases with
+`npx @modelcontextprotocol/inspector --cli ...` instead.
+
 ## Working with the database
 
 ```bash
