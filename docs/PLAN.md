@@ -8,8 +8,8 @@ phase only after it has been confirmed working.
 - [x] Phase 0: Project setup
 - [x] Phase 1: Read-only database layer + guardrails (pytest)
 - [x] Phase 2: MCP server
-- [ ] Phase 3: Test by hand with MCP Inspector
-- [ ] Phase 4: Connect to Claude Code and ask questions in plain language
+- [x] Phase 3: Test by hand with MCP Inspector
+- [x] Phase 4: Connect to Claude Code and ask questions in plain language
 - [ ] Phase 5: LLM client + schema context + few-shot examples
 - [ ] Phase 6: Happy path: question → SQL → answer with cited SQL
 - [ ] Phase 7: Scope gate + clarification
@@ -194,15 +194,17 @@ call the real API.
 
 ### Phase 8: Self-repair loop with tool use
 - **Goal:** recover from bad SQL or empty results, with at most 2 repairs.
-- **Files:** `pipeline/repair.py`, `orchestrator.py`, `llm/client.py` (tool-use support), `tests/test_pipeline_repair.py`.
+- **Files:** `pipeline/repair.py`, `orchestrator.py`, `llm/client.py` (tool-use support), `cli.py` (`--first-sql` debug flag), `tests/test_pipeline_repair.py`.
 - **Run/test:** `pytest tests/test_pipeline_repair.py -v`. The fake LLM produces bad SQL, then fixed SQL. The tests cover:
   - Validation failure, an execution error and an empty result all trigger a repair.
   - The loop stops after 2 repairs with an honest "couldn't answer".
   - `describe_table` is available as a tool only inside repair.
   - For an empty result, the user is told when the scope was broadened.
 
-  Manual check: `python -m db_assistant.cli "orders from Great Britain"`. It should repair `GB` → `UK`.
-- **Done when:** all the tests pass and the manual case repairs itself, with the repair visible in the CLI output.
+  Manual checks with the real LLM. (Not "Great Britain": few-shot example 4 already teaches `UK`, so that question is answered correctly first time and never needs a repair.)
+  1. **Empty result:** `python -m db_assistant.cli "List the orders placed in December 2024"`. The data starts on 2025-04-11, so correct SQL returns no rows. This triggers a repair: the LLM checks types and date format first, then broadens the scope, and tells you the data covers 2025-04-11 to 2025-10-08.
+  2. **Validation failure:** `python -m db_assistant.cli --first-sql "SELECT SUM(revenue) FROM orders" "What is the total revenue?"`. The debug flag replaces the LLM's first attempt with SQL that uses a column that doesn't exist. The server rejects it, and the real LLM has to repair it. It can call `describe_table` to see the real columns.
+- **Done when:** all the tests pass, and both manual cases end in a correct answer. The CLI output shows the failed attempt, the repair (including any `describe_table` call), and, for case 1, the note that the scope was broadened.
 
 ### Phase 9: Evaluation set
 - **Goal:** a repeatable score for answer quality, to catch regressions before the UI.

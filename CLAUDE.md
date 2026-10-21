@@ -143,3 +143,4 @@ session; mark a phase done only after I confirm it works.
 - Error messages are read by the runtime LLM: always name what failed
   and what is allowed.
 - MCP tool errors must be raised as ToolError, or the message is lost.
+- Never send write/DDL SQL (DELETE, DROP, UPDATE…) to the live MCP server to test guardrails; test rejections in pytest or ask first.

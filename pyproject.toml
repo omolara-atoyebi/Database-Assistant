@@ -10,6 +10,7 @@ requires-python = ">=3.10"
 dependencies = [
     "anthropic",
     "mcp",
+    "python-dotenv",
 ]
 
 [project.optional-dependencies]
