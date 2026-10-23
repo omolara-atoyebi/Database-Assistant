@@ -5,10 +5,14 @@ complete_with_tools), not on the
 Anthropic SDK, so the model or provider can be swapped here alone. Tests use a
 FakeLLM with the same interface (tests/conftest.py).
 
+Failures are raised as this module's own exceptions (below), never as
+Anthropic SDK exceptions, so callers don't depend on the SDK either.
+
 Check your API key works:  python -m db_assistant.llm.client
 """
 
 import json
+import os
 
 import anthropic
 from dotenv import load_dotenv
@@ -16,13 +20,32 @@ from dotenv import load_dotenv
 from db_assistant import config
 
 
-class LLMRefusal(Exception):
+class LLMError(Exception):
+    """Base class for LLM failures."""
+
+
+class LLMNotConfigured(LLMError):
+    """No API key is set, or the API rejected the key."""
+
+
+class LLMUnavailable(LLMError):
+    """The API could not be reached or returned an error."""
+
+
+class LLMRefusal(LLMError):
     """The model declined the request (stop_reason "refusal")."""
 
 
 class LLMClient:
     def __init__(self, model=config.MODEL, effort=config.EFFORT, max_tokens=config.MAX_TOKENS):
         load_dotenv(config.PROJECT_ROOT / ".env")
+        # Check up front: without a key the SDK only fails at the first
+        # request, with a bare TypeError.
+        if not os.environ.get("ANTHROPIC_API_KEY"):
+            raise LLMNotConfigured(
+                "ANTHROPIC_API_KEY is not set. Add it to the .env file in the "
+                "project root (see .env.example)."
+            )
         self.client = anthropic.Anthropic()
         self.model = model
         self.effort = effort
@@ -92,14 +115,23 @@ class LLMClient:
         return self._text(response)
 
     def _create(self, system, messages, output_config, **extra):
-        response = self.client.messages.create(
-            model=self.model,
-            max_tokens=self.max_tokens,
-            system=system,
-            messages=messages,
-            output_config=output_config,
-            **extra,
-        )
+        try:
+            response = self.client.messages.create(
+                model=self.model,
+                max_tokens=self.max_tokens,
+                system=system,
+                messages=messages,
+                output_config=output_config,
+                **extra,
+            )
+        except anthropic.AuthenticationError as error:
+            raise LLMNotConfigured(
+                "The API rejected the ANTHROPIC_API_KEY in .env. Check that the key is valid."
+            ) from error
+        except anthropic.APIConnectionError as error:
+            raise LLMUnavailable("Could not reach the Anthropic API. Check your network connection.") from error
+        except anthropic.APIStatusError as error:
+            raise LLMUnavailable(f"The Anthropic API returned an error ({error.status_code}): {error.message}") from error
         if response.stop_reason == "refusal":
             category = response.stop_details.category if response.stop_details else None
             raise LLMRefusal(f"The model declined the request (category: {category}).")

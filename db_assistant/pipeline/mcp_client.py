@@ -9,7 +9,7 @@ connect in-process.
 """
 
 import sys
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 
 from mcp import Client, StdioServerParameters
 
@@ -18,6 +18,10 @@ from db_assistant import config
 
 class QueryFailed(Exception):
     """The server rejected a tool call or the query failed. The message is the server's."""
+
+
+class ServerUnavailable(Exception):
+    """The MCP server could not be started, or the connection to it broke."""
 
 
 def server_params():
@@ -35,7 +39,12 @@ class DatabaseTools:
         self.client = client
 
     async def _call(self, tool, arguments=None):
-        result = await self.client.call_tool(tool, arguments or {})
+        try:
+            result = await self.client.call_tool(tool, arguments or {})
+        except Exception as error:
+            # Tool errors come back as results (below); an exception here
+            # means the transport itself failed.
+            raise ServerUnavailable(f"Lost the connection to the MCP server: {error!r}") from error
         if result.is_error:
             raise QueryFailed(result.content[0].text)
         return result.structured_content
@@ -58,5 +67,13 @@ async def connect(server=None):
     server: an MCPServer object for in-process use (tests); None starts the
     real server process.
     """
-    async with Client(server if server is not None else server_params()) as client:
+    async with AsyncExitStack() as stack:
+        # Only failures while connecting become ServerUnavailable; errors
+        # raised inside the `async with` body pass through unchanged.
+        try:
+            client = await stack.enter_async_context(
+                Client(server if server is not None else server_params())
+            )
+        except Exception as error:
+            raise ServerUnavailable(f"Could not start or connect to the MCP server: {error!r}") from error
         yield DatabaseTools(client)

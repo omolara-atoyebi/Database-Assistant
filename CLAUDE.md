@@ -145,3 +145,4 @@ session; mark a phase done only after I confirm it works.
 - MCP tool errors must be raised as ToolError, or the message is lost.
 - Never send write/DDL SQL (DELETE, DROP, UPDATE…) to the live MCP server to test guardrails; test rejections in pytest or ask first.
 - Sensitivity policy: rankings across all customers are fine even with names; questions targeting one specific customer are sensitive. A follow-up answer must never turn an in-scope question into a decline.
+- Context added to the shared schema text reaches every LLM step, including the scope gate. Before adding facts about the data (ranges, counts), check how the scope gate will read them, and add a scope eval case.

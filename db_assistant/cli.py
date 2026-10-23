@@ -11,9 +11,9 @@ Force a repair by replacing the LLM's first SQL:
 import argparse
 import sys
 
-from db_assistant.llm.client import LLMClient
 from db_assistant.pipeline.orchestrator import (
     DECLINED,
+    ERROR,
     FAILED,
     NEEDS_CLARIFICATION,
     answer_question,
@@ -43,8 +43,7 @@ def main(argv=None):
     parser.add_argument("--first-sql", help="debug: use this SQL instead of the LLM's first attempt")
     args = parser.parse_args(argv)
 
-    llm = LLMClient()
-    result = answer_question(args.question, llm=llm, first_sql=args.first_sql)
+    result = answer_question(args.question, first_sql=args.first_sql)
 
     if result.status == NEEDS_CLARIFICATION:
         print(f"Assistant: {result.answer}")
@@ -52,17 +51,25 @@ def main(argv=None):
         user_answer = input("You: ")
         result = answer_question(
             args.question,
-            llm=llm,
             clarification=(result.answer, user_answer),
             first_sql=args.first_sql,
         )
 
+    if result.status == ERROR:
+        print(result.answer)
+        print(f"  ({result.error_kind}: {result.error})")
+        return 1
+
     if result.status == DECLINED:
         print(result.answer)
         print(f"  (declined: {result.reason})")
+        for suggestion in result.suggestions:
+            print(f"  - try: {suggestion}")
         return 0
 
     print_attempts(result.attempts)
+    if result.data_note:
+        print(f"Note: {result.data_note}")
     if result.scope_note:
         print(f"Note: the question was broadened. {result.scope_note}\n")
     print(result.answer)

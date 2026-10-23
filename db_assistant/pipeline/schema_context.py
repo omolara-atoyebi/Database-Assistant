@@ -13,6 +13,11 @@ VALUE_LIST_QUERIES = {
     "products.category": "SELECT DISTINCT category FROM products ORDER BY category",
 }
 
+# The period the data covers. Used only for the answer's "no data" note; it is
+# deliberately NOT in the schema context, because the scope gate would read
+# an out-of-range date as "not in the database" and decline the question.
+DATE_RANGE_QUERY = "SELECT MIN(order_date), MAX(order_date) FROM orders"
+
 DATA_NOTES = [
     "Dates are TEXT in YYYY-MM-DD format. Use strftime('%Y-%m', order_date) or "
     "date(...) to bucket and compare them.",

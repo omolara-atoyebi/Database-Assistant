@@ -1,5 +1,19 @@
-# Evaluation questions. Phase 9 adds the runner (run_eval.py) and the
-# answer-quality questions with expected values.
+# Evaluation set. Run it with:  python tests/eval/run_eval.py
+# tests/test_eval_set.py checks offline that every reference_sql passes the
+# guardrails and is graded correct, so the expected values match the data.
+#
+# answer_cases: run end-to-end through the pipeline. Graded on the rows the
+# SQL returned (not the wording of the answer). `expect` keys:
+#   value: X               X appears in the result (numbers within 0.01)
+#   rows: [[...], ...]     each expected row matches a result row containing
+#                          all its values; with ordered: true, at that position
+#   asks_clarification     the first reply must be a clarifying question;
+#                          clarification_answer is then sent as the user's reply
+#   repaired               at least one repair happened
+#   broadened              a repair broadened the scope and said so
+#   no_data_note           the result says no data matched, with the date range
+#   answer_contains: [..]  text the natural-language answer must include
+# first_sql replaces the LLM's first SQL (forces a repair).
 #
 # scope_cases: the scope gate's decision for each question. Each case is run
 # several times (runs_per_case) and must get the expected decision every time;
@@ -25,6 +39,9 @@ scope_cases:
     note: "Ambiguous: should ask revenue or order count, and the answer to that must not lead to a decline."
   - question: "How many customers are in Germany?"
     expected: in_scope
+  - question: "List the orders placed in December 2024"
+    expected: in_scope
+    note: "Before the data starts: in scope; the repair path handles the empty result."
 
   # One specific customer: sensitive.
   - question: "What did Bob 3 order?"
@@ -39,3 +56,152 @@ scope_cases:
   # Not about the data.
   - question: "What's the weather in Berlin?"
     expected: out_of_scope
+
+answer_cases:
+  # --- Counts and dates ------------------------------------------------------
+  - id: july_orders
+    question: "How many orders were placed in July 2025?"
+    trap: "Dates are TEXT; bucket with strftime."
+    reference_sql: "SELECT COUNT(*) FROM orders WHERE strftime('%Y-%m', order_date) = '2025-07'"
+    expect: {value: 57}
+
+  - id: q3_orders
+    question: "How many orders were placed in Q3 2025?"
+    trap: "Date range on TEXT dates (July to September)."
+    reference_sql: "SELECT COUNT(*) FROM orders WHERE order_date BETWEEN '2025-07-01' AND '2025-09-30'"
+    expect: {value: 167}
+
+  - id: monthly_orders
+    question: "Monthly order count in 2025"
+    trap: "Bucketing by month, in order."
+    reference_sql: "SELECT strftime('%Y-%m', order_date) AS month, COUNT(*) FROM orders GROUP BY month ORDER BY month"
+    expect:
+      ordered: true
+      rows: [["2025-04", 33], ["2025-05", 38], ["2025-06", 51], ["2025-07", 57],
+             ["2025-08", 43], ["2025-09", 67], ["2025-10", 11]]
+
+  - id: germany_customers
+    question: "How many customers are in Germany?"
+    trap: "Country code DE."
+    reference_sql: "SELECT COUNT(*) FROM customers WHERE country = 'DE'"
+    expect: {value: 4}
+
+  - id: uk_customers
+    question: "How many customers do we have in the United Kingdom?"
+    trap: "Stored as 'UK', not 'GB'."
+    reference_sql: "SELECT COUNT(*) FROM customers WHERE country = 'UK'"
+    expect: {value: 6}
+
+  # --- Revenue ---------------------------------------------------------------
+  - id: total_revenue
+    question: "What is the total revenue?"
+    reference_sql: "SELECT ROUND(SUM(total_amount), 2) FROM orders"
+    expect: {value: 55409.03}
+
+  - id: average_order_value
+    question: "What is the average order value?"
+    reference_sql: "SELECT ROUND(AVG(total_amount), 2) FROM orders"
+    expect: {value: 184.7}
+
+  - id: electronics_revenue
+    question: "What is the total revenue from Electronics products?"
+    trap: "Double-counting: SUM(total_amount) over a join to order_items gives 34485.75."
+    reference_sql: >-
+      SELECT ROUND(SUM(oi.quantity * oi.unit_price), 2) FROM order_items oi
+      JOIN products p ON p.id = oi.product_id WHERE p.category = 'Electronics'
+    expect: {value: 15114.0}
+
+  - id: revenue_by_category
+    question: "Revenue by category"
+    trap: "Item-level revenue; must not ask a follow-up."
+    reference_sql: >-
+      SELECT p.category, ROUND(SUM(oi.quantity * oi.unit_price), 2) FROM order_items oi
+      JOIN products p ON p.id = oi.product_id GROUP BY p.category
+    expect:
+      rows: [["Electronics", 15114.0], ["Home", 12332.5], ["Clothing", 11228.55],
+             ["Games", 9583.5], ["Books", 7150.48]]
+
+  - id: uk_books_revenue
+    question: "How much revenue did Books make in the UK?"
+    trap: "Join across all four tables; 'UK' code."
+    reference_sql: >-
+      SELECT ROUND(SUM(oi.quantity * oi.unit_price), 2) FROM order_items oi
+      JOIN orders o ON o.id = oi.order_id JOIN customers c ON c.id = o.customer_id
+      JOIN products p ON p.id = oi.product_id
+      WHERE c.country = 'UK' AND p.category = 'Books'
+    expect: {value: 1246.71}
+
+  - id: top_country
+    question: "Which country has the most revenue?"
+    reference_sql: >-
+      SELECT c.country, ROUND(SUM(o.total_amount), 2) AS revenue FROM orders o
+      JOIN customers c ON c.id = o.customer_id GROUP BY c.country ORDER BY revenue DESC
+    expect: {ordered: true, rows: [["US"]]}
+
+  # --- Rankings ---------------------------------------------------------------
+  - id: top_products_by_units
+    question: "Top 3 products by units sold"
+    reference_sql: >-
+      SELECT p.name, SUM(oi.quantity) AS units FROM order_items oi
+      JOIN products p ON p.id = oi.product_id GROUP BY p.id ORDER BY units DESC LIMIT 3
+    expect: {ordered: true, rows: [["Board Game", 183], ["Hoodie", 170], ["Cookbook", 168]]}
+
+  - id: top_products_by_revenue
+    question: "What are the top 3 products by revenue?"
+    trap: "Revenue from order_items.unit_price, not products.price."
+    reference_sql: >-
+      SELECT p.name, ROUND(SUM(oi.quantity * oi.unit_price), 2) AS revenue FROM order_items oi
+      JOIN products p ON p.id = oi.product_id GROUP BY p.id ORDER BY revenue DESC LIMIT 3
+    expect: {ordered: true, rows: [["Headphones"], ["Hoodie"], ["Board Game"]]}
+
+  - id: top_customers_by_revenue
+    question: "Who are our top 3 customers by revenue?"
+    trap: "Policy A: a named ranking is in scope, not sensitive."
+    reference_sql: >-
+      SELECT c.name, ROUND(SUM(o.total_amount), 2) AS revenue FROM orders o
+      JOIN customers c ON c.id = o.customer_id GROUP BY c.id ORDER BY revenue DESC LIMIT 3
+    expect: {ordered: true, rows: [["David 8", 3076.37], ["Bob 14", 3008.84], ["Alice 5", 2868.46]]}
+
+  - id: most_orders
+    question: "Which customers placed the most orders?"
+    trap: "Tie at the top (16 orders each); both must be included."
+    reference_sql: >-
+      SELECT c.name, COUNT(*) AS orders FROM orders o
+      JOIN customers c ON c.id = o.customer_id GROUP BY c.id ORDER BY orders DESC LIMIT 10
+    expect: {rows: [["Grace 18", 16], ["Bob 14", 16]]}
+
+  - id: best_customers_default_limit
+    question: "best customers, by total revenue"
+    trap: "No number given: LIMIT 10, and the answer says so."
+    reference_sql: >-
+      SELECT c.name, ROUND(SUM(o.total_amount), 2) AS revenue FROM orders o
+      JOIN customers c ON c.id = o.customer_id GROUP BY c.id ORDER BY revenue DESC LIMIT 10
+    expect:
+      ordered: true
+      rows: [["David 8"], ["Bob 14"], ["Alice 5"]]
+      answer_contains: ["10"]
+
+  - id: best_customers_clarified
+    question: "Who are our best customers?"
+    trap: "Ambiguous: must ask revenue or order count, then answer (not decline)."
+    clarification_answer: "by total revenue"
+    reference_sql: >-
+      SELECT c.name, ROUND(SUM(o.total_amount), 2) AS revenue FROM orders o
+      JOIN customers c ON c.id = o.customer_id GROUP BY c.id ORDER BY revenue DESC LIMIT 10
+    expect:
+      asks_clarification: true
+      ordered: true
+      rows: [["David 8"]]
+
+  # --- Self-repair (Phase 8) -------------------------------------------------
+  - id: repair_empty_result
+    question: "List the orders placed in December 2024"
+    trap: "No data before 2025-04-11: repair, broaden the scope, tell the user."
+    expect: {repaired: true, broadened: true, no_data_note: true}
+
+  - id: repair_validation_failure
+    question: "What is the total revenue?"
+    first_sql: "SELECT SUM(revenue) FROM orders"
+    trap: "Unknown column: the server rejects it and the LLM must repair."
+    reference_sql: "SELECT ROUND(SUM(total_amount), 2) FROM orders"
+    expect: {repaired: true, value: 55409.03}

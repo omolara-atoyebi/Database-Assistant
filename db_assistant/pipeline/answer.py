@@ -11,9 +11,10 @@ returned. Answer the question in one to three plain sentences, using only those
 rows. Do not invent numbers. Do not repeat the SQL. If the result was
 truncated, say the answer is based on the first rows only. If the SQL has a
 LIMIT the question did not ask for, say so, e.g. "Showing the top 10, since
-no number was given." If a scope note is given, the query was broadened
-because the original question had no matching data: start your answer by
-telling the user that, using the note."""
+no number was given." If a data note is given, the original question had
+no matching data: start your answer by saying so and give the date range the
+data covers, as in the note. If a scope note is given, the query was
+broadened: say what you show instead, using the note."""
 
 
 def format_rows(result):
@@ -23,7 +24,7 @@ def format_rows(result):
     return "\n".join(lines)
 
 
-def build_user_message(question, sql, result, scope_note=None):
+def build_user_message(question, sql, result, scope_note=None, data_note=None):
     parts = [
         f"Question: {question}",
         f"SQL:\n{sql}",
@@ -31,13 +32,15 @@ def build_user_message(question, sql, result, scope_note=None):
     ]
     if result["truncated"]:
         parts.append(f"Note: the result was truncated to the first {result['row_count']} rows.")
+    if data_note:
+        parts.append(f"Data note: {data_note}")
     if scope_note:
         parts.append(f"Scope note: {scope_note}")
     return "\n\n".join(parts)
 
 
-def write_answer(llm, question, sql, result, scope_note=None):
+def write_answer(llm, question, sql, result, scope_note=None, data_note=None):
     return llm.complete(
         system=INSTRUCTIONS,
-        user_message=build_user_message(question, sql, result, scope_note),
+        user_message=build_user_message(question, sql, result, scope_note, data_note),
     ).strip()

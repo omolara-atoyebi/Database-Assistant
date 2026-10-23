@@ -13,9 +13,10 @@ phase only after it has been confirmed working.
 - [x] Phase 5: LLM client + schema context + few-shot examples
 - [x] Phase 6: Happy path: question → SQL → answer with cited SQL
 - [x] Phase 7: Scope gate + clarification
-- [ ] Phase 8: Self-repair loop with tool use
-- [ ] Phase 9: Evaluation set
-- [ ] Phase 10: UI
+- [x] Phase 8: Self-repair loop with tool use
+- [x] Phase 9: Evaluation set
+- [x] Phase 10a: Orchestrator support for the UI (steps, suggestions, friendly errors)
+- [ ] Phase 10b: Streamlit UI
 
 ## Context
 
@@ -215,13 +216,55 @@ call the real API.
 - **Done when:** the eval runs end-to-end and you're happy with the pass rate. Failures should be understood and either fixed or noted.
 
 ### Phase 10: UI
-- **Goal:** a simple Streamlit chat page on top of `orchestrator.py`.
-- **Files:** `ui/app.py`, `README.md` (how to run).
-- **Run/test:** `streamlit run db_assistant/ui/app.py`.
-- **Done when:** in the browser you can:
-  - ask a question and see the answer with the executed SQL
-  - answer a clarifying question
-  - see a decline for an out-of-scope question
-  - see when a repair happened
 
-  The UI contains no pipeline logic; it only calls the orchestrator.
+**Rule:** the UI contains no pipeline logic. It only calls the orchestrator
+and displays what comes back. If the result doesn't carry something the UI
+needs, change the result object, not the UI.
+
+**MCP connection:** one per request. Each `answer_question(...)` call starts
+the MCP server subprocess over stdio, loads the schema through it, runs the
+steps and closes it (~1s, small next to the LLM calls). A clarification reply
+is a new request. No long-lived connection across Streamlit reruns.
+
+**Decisions:** no structured SQL reply (`generate.py` and the Phase 6-8 tests
+stay as they are); there is no separate default-limit field, since the answer
+text and the cited SQL already show the limit.
+
+### Phase 10a: Orchestrator support for the UI
+- **Goal:** everything the UI needs is in the orchestrator's result, tested offline.
+- **Changes:**
+  - `on_step(step, detail)` callback on `answer_question`, called as each step starts: `scope`, `clarify`, `generate`, `run` (attempt n), `repair` (n), `describe_table` (table), `answer`. The same events are kept in `Result.steps`. `describe_table` events are reported after the repair call returns, on the caller's thread (Streamlit can only update the page from its own thread).
+  - Scope gate returns `suggestions` (2-3 questions it can answer) for a decline -> `Result.suggestions`.
+  - New status `error` with `Result.error_kind`: `missing_api_key`, `mcp_unavailable`, `llm_error`, and a friendly `answer` (no tracebacks). `failed` stays "couldn't answer after 2 repairs".
+    - `llm/client.py` raises its own `LLMNotConfigured` (no key after loading `.env`, or the API rejects the key) and `LLMUnavailable` (connection or API errors), so Anthropic exceptions stay in that module.
+    - `mcp_client.py` raises `ServerUnavailable` if the server can't start or the connection breaks.
+  - `Result.repair_count` (number of repairs) for the "Repaired N time(s)" badge.
+  - `orchestrator.list_allowed_tables()` for the sidebar, via the MCP server's `list_tables`.
+  - Empty periods: the data's date range (MIN/MAX `order_date`, fetched through MCP) is added to the schema context. If any attempt returns no rows, `Result.data_note` says no data matched and gives the date range; it is computed in code, not by the LLM, and the answer step is told to start with it. If a repair broadens the question, `Result.scope_note` is always set (a fallback text if the LLM left its note empty).
+  - `cli.py` shows the `error` status and the notes.
+- **Files:** `pipeline/orchestrator.py`, `pipeline/scope.py`, `pipeline/mcp_client.py`, `pipeline/schema_context.py`, `pipeline/answer.py`, `llm/client.py`, `cli.py`, `tests/test_pipeline_ui_contract.py`.
+- **Run/test:** `pytest -v`; `python -m db_assistant.cli "List the orders placed in December 2024"` shows the no-data note with the date range.
+- **Done when:** all tests pass, including: step order; error statuses for a missing key, an unreachable MCP server and an LLM failure; suggestions on a decline; `repair_count`; `list_allowed_tables`; an empty period yields a data note with the date range that reaches the answer step; a broadened repair always sets `scope_note`.
+
+### Phase 10b: Streamlit UI
+- **Goal:** a simple Streamlit chat page on top of `orchestrator.py`.
+- **Files:** `ui/__init__.py`, `ui/app.py`, `README.md` (how to run). Install with `pip install -e ".[dev,ui]"`.
+- **Layout:**
+  - Chat: history above, `st.chat_input` at the bottom.
+  - Sidebar: what this is; allowed tables (`list_allowed_tables()`); model name (`config.MODEL`); example buttons (clear: "How many orders were placed in July 2025?", ambiguous: "Who are our best customers?", out of scope: "What's the weather in Berlin?", sensitive: "What did Bob 3 order?", repair: "List the orders placed in December 2024"); "New conversation" clears `session_state`.
+- **Per status:**
+  - `answered`: answer; data note / scope note if set (always shown); table with row count; truncation note; repair badge + trace expander if repaired; "SQL that was run" expander.
+  - `needs_clarification`: the question as a chat message, "why I'm asking" in small text. The pending request is kept in `session_state`; the next message is sent as `clarification=...`.
+  - `declined`: warning style, with the reason and the suggestions.
+  - `failed` / `error`: error style with the friendly message; `failed` also shows the repair trace.
+- **While working:** `st.status` lists the steps as `on_step` reports them.
+- **Repair trace:** per attempt the SQL, the error it got, any `describe_table` call, the LLM's reason, and the revised SQL.
+- **Out of scope:** login, deployment, saving history between sessions, charts.
+- **Run/test:** `streamlit run db_assistant/ui/app.py`.
+- **Done when** (checked in the browser):
+  - a clear question gets an answer, table and cited SQL
+  - "Who are our best customers?" asks a follow-up and then answers
+  - an out-of-scope question is declined
+  - a repair case shows the repair trace
+  - missing API key shows a friendly error
+  - the example buttons work and "New conversation" resets everything

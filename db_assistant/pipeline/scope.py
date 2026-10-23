@@ -16,6 +16,8 @@ user's question as one of:
 - in_scope: it can be answered from this database and is not sensitive.
 - out_of_scope: it is not about this data (weather, general knowledge,
   coding help, ...) or asks for something the database does not contain.
+  A question about this data is in_scope even if it may return no rows,
+  e.g. a period with no orders: that is handled later, when the query runs.
 - sensitive: it targets one specific customer, named or identified, and
   asks for their details or records.
 
@@ -44,7 +46,10 @@ says how to measure.
 
 Give a short reason. If the question is not in_scope, write message_to_user:
 a brief, polite reply that declines and says what the assistant can help
-with. If it is in_scope, leave message_to_user empty."""
+with, and give 2-3 suggestions: example questions this assistant can answer,
+close to what the user seemed to want (for a sensitive question, an aggregate
+alternative). If it is in_scope, leave message_to_user empty and give no
+suggestions."""
 
 SCHEMA = {
     "type": "object",
@@ -52,14 +57,15 @@ SCHEMA = {
         "decision": {"type": "string", "enum": [IN_SCOPE, OUT_OF_SCOPE, SENSITIVE]},
         "reason": {"type": "string"},
         "message_to_user": {"type": "string"},
+        "suggestions": {"type": "array", "items": {"type": "string"}},
     },
-    "required": ["decision", "reason", "message_to_user"],
+    "required": ["decision", "reason", "message_to_user", "suggestions"],
     "additionalProperties": False,
 }
 
 
 def check_scope(llm, schema_text, question):
-    """Return {"decision", "reason", "message_to_user"}."""
+    """Return {"decision", "reason", "message_to_user", "suggestions"}."""
     return llm.complete_json(
         system=f"{INSTRUCTIONS}\n\n{schema_text}",
         user_message=question,
