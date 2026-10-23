@@ -23,7 +23,12 @@ from db_assistant.pipeline.answer import write_answer
 from db_assistant.pipeline.clarify import check_ambiguity, with_clarification
 from db_assistant.pipeline.generate import generate_sql
 from db_assistant.pipeline.repair import EMPTY_RESULT, Attempt, repair_sql
-from db_assistant.pipeline.schema_context import DATE_RANGE_QUERY, VALUE_LIST_QUERIES, format_schema
+from db_assistant.pipeline.schema_context import (
+    DATE_RANGE_QUERY,
+    VALUE_LIST_QUERIES,
+    format_schema,
+    tables_in_sql,
+)
 from db_assistant.pipeline.scope import IN_SCOPE, check_scope
 
 ANSWERED = "answered"
@@ -76,8 +81,14 @@ async def load_date_range(db):
     return first, last
 
 
-async def load_schema_text(db):
-    tables = [await db.describe_table(name) for name in await db.list_tables()]
+async def load_tables(db):
+    """describe_table results for every allowed table."""
+    return [await db.describe_table(name) for name in await db.list_tables()]
+
+
+async def load_schema_text(db, tables=None):
+    if tables is None:
+        tables = await load_tables(db)
     value_lists = {}
     for column, sql in VALUE_LIST_QUERIES.items():
         result = await db.run_query(sql)
@@ -99,7 +110,8 @@ def no_data_note(date_range):
 
 
 async def answer_question_async(question, llm, db, emit, clarification=None, first_sql=None):
-    schema_text = await load_schema_text(db)
+    tables = await load_tables(db)
+    schema_text = await load_schema_text(db, tables)
     date_range = await load_date_range(db)  # for data_note only, see schema_context.py
 
     if clarification is not None:
@@ -172,10 +184,15 @@ async def answer_question_async(question, llm, db, emit, clarification=None, fir
     had_empty = any(attempt.problem == EMPTY_RESULT for attempt in attempts)
     data_note = no_data_note(date_range) if had_empty and (scope_note or not result["rows"]) else None
 
+    # The exact descriptions of the tables the final SQL used, from the schema
+    # already loaded through MCP, so "describe X" answers state real columns.
+    used = tables_in_sql(sql)
+    used_tables = [table for table in tables if table["table"] in used]
+
     emit(STEP_ANSWER)
     return Result(
         status=ANSWERED,
-        answer=write_answer(llm, question, sql, result, scope_note, data_note),
+        answer=write_answer(llm, question, sql, result, scope_note, data_note, used_tables),
         sql=sql,
         columns=result["columns"],
         rows=result["rows"],

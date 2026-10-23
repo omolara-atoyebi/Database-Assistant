@@ -160,4 +160,6 @@ def test_sql_prompt_uses_the_default_limit_for_rankings_without_a_number():
 
 
 def test_answer_prompt_says_to_mention_a_default_limit():
-    assert "LIMIT the question did not ask for" in answer.INSTRUCTIONS
+    prompt = " ".join(answer.INSTRUCTIONS.split())
+    assert "Mention a LIMIT only when the question gave no number" in prompt
+    assert "if the question gave a number, do not comment on the LIMIT" in prompt

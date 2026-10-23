@@ -5,6 +5,9 @@ MCP describe_table tool returns) and value lists, and returns text. It does not
 query the database itself; Phase 6 fetches its inputs through the MCP server.
 """
 
+import re
+
+from db_assistant import config
 from db_assistant.pipeline.few_shot import FEW_SHOT_EXAMPLES
 
 # Columns with a small fixed set of values, and the SQL that lists them.
@@ -43,6 +46,16 @@ def format_table(table):
     for fk in table["foreign_keys"]:
         lines.append(f"  - foreign key: {table['table']}.{fk['column']} -> {fk['references']}")
     return "\n".join(lines)
+
+
+def tables_in_sql(sql, table_names=config.ALLOWED_TABLES):
+    """The table names that appear as whole words in sql, in table_names order.
+
+    Can over-include (e.g. an alias "AS orders" counts as the orders table),
+    which is harmless where it's used; it can't miss a table the query reads,
+    since every table read has to be named in the SQL.
+    """
+    return [name for name in table_names if re.search(rf"\b{re.escape(name)}\b", sql, re.IGNORECASE)]
 
 
 def format_examples(examples=FEW_SHOT_EXAMPLES):
