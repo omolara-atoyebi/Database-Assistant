@@ -10,9 +10,9 @@ phase only after it has been confirmed working.
 - [x] Phase 2: MCP server
 - [x] Phase 3: Test by hand with MCP Inspector
 - [x] Phase 4: Connect to Claude Code and ask questions in plain language
-- [ ] Phase 5: LLM client + schema context + few-shot examples
-- [ ] Phase 6: Happy path: question → SQL → answer with cited SQL
-- [ ] Phase 7: Scope gate + clarification
+- [x] Phase 5: LLM client + schema context + few-shot examples
+- [x] Phase 6: Happy path: question → SQL → answer with cited SQL
+- [x] Phase 7: Scope gate + clarification
 - [ ] Phase 8: Self-repair loop with tool use
 - [ ] Phase 9: Evaluation set
 - [ ] Phase 10: UI
@@ -182,7 +182,8 @@ call the real API.
 
 ### Phase 7: Scope gate + clarification
 - **Goal:** the LLM declines out-of-scope or sensitive questions, and asks a follow-up when a question is ambiguous.
-- **"Sensitive" means:** questions about an individual customer's personal data, e.g. "What did Bob 3 order?" or "Show me David 2's signup date". Aggregates such as revenue by country or customer counts are fine.
+- **"Sensitive" means:** questions that target one specific customer (by name or id), e.g. "What did Bob 3 order?", "Show me David 2's signup date" or "How much has Bob 3 spent?". Aggregates such as revenue by country or customer counts are fine, and so are rankings across all customers even when they show names, e.g. "Top 3 customers by revenue". The scope gate decides before clarification, and answering a follow-up must not turn an in-scope question into a decline.
+- **Default limit:** a "top"/"best" question with no number uses `config.DEFAULT_TOP_N` (10), and the answer says so.
 - **Files:** `pipeline/scope.py`, `pipeline/clarify.py`, `orchestrator.py` (wire in), `cli.py` (ask the follow-up interactively), `tests/test_pipeline_scope.py`.
 - **Run/test:** `pytest tests/test_pipeline_scope.py -v` (checks routing with fake LLM decisions). Then try the CLI with:
   - "What's the weather in Berlin?" (should decline: out of scope)
@@ -209,6 +210,7 @@ call the real API.
 ### Phase 9: Evaluation set
 - **Goal:** a repeatable score for answer quality, to catch regressions before the UI.
 - **Files:** `tests/eval/questions.yaml` (~15 questions with expected values), `tests/eval/run_eval.py`.
+- **Scope consistency:** `questions.yaml` already has `scope_cases` from the Phase 7 sensitivity fix. The runner must run each one `runs_per_case` times and fail any case whose decision differs between runs.
 - **Run/test:** `python tests/eval/run_eval.py` (uses the real API; prints pass/fail per question).
 - **Done when:** the eval runs end-to-end and you're happy with the pass rate. Failures should be understood and either fixed or noted.
 

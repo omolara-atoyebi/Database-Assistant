@@ -1,0 +1,41 @@
+# Evaluation questions. Phase 9 adds the runner (run_eval.py) and the
+# answer-quality questions with expected values.
+#
+# scope_cases: the scope gate's decision for each question. Each case is run
+# several times (runs_per_case) and must get the expected decision every time;
+# a case that flips between runs is a failure even if it is right on average.
+# Policy (docs/PLAN.md, Phase 7): rankings across all customers are in scope,
+# even with names; questions targeting one specific customer are sensitive.
+
+runs_per_case: 5
+
+scope_cases:
+  # Rankings of named customers: the bug report pair, plus variations.
+  - question: "Best customers, by revenue, top 3"
+    expected: in_scope
+  - question: "best customers, by total revenue"
+    expected: in_scope
+    note: "No number given: the answer must say it used the default limit (10)."
+  - question: "Who are our top 3 customers by revenue?"
+    expected: in_scope
+  - question: "Which customers placed the most orders?"
+    expected: in_scope
+  - question: "Who are our best customers?"
+    expected: in_scope
+    note: "Ambiguous: should ask revenue or order count, and the answer to that must not lead to a decline."
+  - question: "How many customers are in Germany?"
+    expected: in_scope
+
+  # One specific customer: sensitive.
+  - question: "What did Bob 3 order?"
+    expected: sensitive
+  - question: "Show me David 2's signup date"
+    expected: sensitive
+  - question: "How much has Bob 3 spent in total?"
+    expected: sensitive
+  - question: "List every order placed by customer 7"
+    expected: sensitive
+
+  # Not about the data.
+  - question: "What's the weather in Berlin?"
+    expected: out_of_scope

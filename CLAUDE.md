@@ -144,3 +144,4 @@ session; mark a phase done only after I confirm it works.
   and what is allowed.
 - MCP tool errors must be raised as ToolError, or the message is lost.
 - Never send write/DDL SQL (DELETE, DROP, UPDATE…) to the live MCP server to test guardrails; test rejections in pytest or ask first.
+- Sensitivity policy: rankings across all customers are fine even with names; questions targeting one specific customer are sensitive. A follow-up answer must never turn an in-scope question into a decline.
