@@ -15,7 +15,7 @@ Requires Python 3.10+.
 /opt/homebrew/bin/python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev,ui]"
-cp .env.example .env        # then put your ANTHROPIC_API_KEY in .env
+cp .env.example .env        # put ANTHROPIC_API_KEY in .env
 ```
 
 ## Run the UI
