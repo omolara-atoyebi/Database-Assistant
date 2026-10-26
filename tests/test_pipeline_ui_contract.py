@@ -4,20 +4,34 @@ The UI holds no pipeline logic, so everything it shows must be on the Result:
 steps, suggestions, friendly errors, repair count, notes, allowed tables.
 """
 
+import urllib.error
+
 import pytest
 
 from db_assistant import config
 from db_assistant.llm import client as llm_client
-from db_assistant.llm.client import LLMNotConfigured, LLMRefusal, LLMUnavailable
+from db_assistant.llm.client import (
+    LLMContextTooSmall,
+    LLMFormatError,
+    LLMModelMissing,
+    LLMNotConfigured,
+    LLMRefusal,
+    LLMServerDown,
+    LLMUnavailable,
+)
 from db_assistant.mcp_server.server import mcp
 from db_assistant.pipeline import mcp_client, orchestrator
 from db_assistant.pipeline.orchestrator import (
     ANSWERED,
+    CONTEXT_TOO_SMALL,
     DECLINED,
     ERROR,
     LLM_ERROR,
+    LLM_FORMAT,
+    LLM_NOT_RUNNING,
     MCP_UNAVAILABLE,
     MISSING_API_KEY,
+    MODEL_NOT_FOUND,
     answer_question,
     list_allowed_tables,
 )
@@ -113,9 +127,14 @@ def test_scope_schema_requires_suggestions():
 
 # --- Friendly errors ----------------------------------------------------------
 
+def use_anthropic_without_a_key(monkeypatch):
+    monkeypatch.setattr(config, "LLM_PROVIDER", config.ANTHROPIC)
+    monkeypatch.setattr(config, "LLM_BASE_URL", None)
+    monkeypatch.setattr(config, "LLM_API_KEY", None)
+
+
 def test_missing_api_key_is_a_friendly_error(monkeypatch):
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.setattr(llm_client, "load_dotenv", lambda *args, **kwargs: None)  # ignore .env
+    use_anthropic_without_a_key(monkeypatch)
 
     result = answer_question("What is the total revenue?", server=mcp)
 
@@ -127,10 +146,40 @@ def test_missing_api_key_is_a_friendly_error(monkeypatch):
 
 
 def test_llm_client_raises_its_own_error_without_a_key(monkeypatch):
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.setattr(llm_client, "load_dotenv", lambda *args, **kwargs: None)
+    use_anthropic_without_a_key(monkeypatch)
     with pytest.raises(LLMNotConfigured):
         llm_client.LLMClient()
+
+
+def test_ollama_not_running_is_a_friendly_error(monkeypatch):
+    # Nothing listens on port 9, so this is a real "connection refused", offline.
+    monkeypatch.setattr(config, "LLM_PROVIDER", config.OLLAMA)
+    monkeypatch.setattr(config, "LLM_BASE_URL", "http://127.0.0.1:9")
+
+    result = answer_question("What is the total revenue?", server=mcp)
+
+    assert result.status == ERROR
+    assert result.error_kind == LLM_NOT_RUNNING
+    assert "Ollama server isn't running" in result.answer
+    assert "ollama serve" in result.answer
+    assert "http://127.0.0.1:9" in result.error
+
+
+def test_ollama_model_not_installed_is_a_friendly_error(monkeypatch):
+    def not_found(base_url, model):
+        raise urllib.error.HTTPError(f"{base_url}/api/show", 404, "Not Found", None, None)
+
+    monkeypatch.setattr(config, "LLM_PROVIDER", config.OLLAMA)
+    monkeypatch.setattr(config, "MODEL", "qwen3-14b-16k")
+    monkeypatch.setattr(llm_client, "fetch_ollama_model", not_found)
+
+    result = answer_question("What is the total revenue?", server=mcp)
+
+    assert result.status == ERROR
+    assert result.error_kind == MODEL_NOT_FOUND
+    assert "qwen3-14b-16k" in result.answer
+    assert "ollama pull qwen3:14b" in result.error
+    assert "ollama create qwen3-14b-16k -f ollama/Modelfile" in result.error
 
 
 @pytest.mark.parametrize(
@@ -139,8 +188,12 @@ def test_llm_client_raises_its_own_error_without_a_key(monkeypatch):
         (LLMNotConfigured("The API rejected the key."), MISSING_API_KEY),
         (LLMUnavailable("Could not reach the Anthropic API."), LLM_ERROR),
         (LLMRefusal("Declined."), LLM_ERROR),
+        (LLMServerDown("Ollama isn't running."), LLM_NOT_RUNNING),
+        (LLMModelMissing("Model not installed."), MODEL_NOT_FOUND),
+        (LLMContextTooSmall("Prompt too long."), CONTEXT_TOO_SMALL),
+        (LLMFormatError("Not JSON."), LLM_FORMAT),
     ],
-    ids=["rejected-key", "api-unreachable", "refusal"],
+    ids=["rejected-key", "api-unreachable", "refusal", "ollama-down", "model-missing", "context", "format"],
 )
 def test_llm_failures_mid_request_are_friendly_errors(error, kind):
     result = answer_question("What is the total revenue?", llm=RaisingLLM(error), server=mcp)

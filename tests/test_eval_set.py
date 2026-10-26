@@ -12,7 +12,17 @@ from pathlib import Path
 import pytest
 
 from db_assistant.mcp_server import database
-from db_assistant.pipeline.orchestrator import ANSWERED, DECLINED, NEEDS_CLARIFICATION, Result
+from db_assistant.llm.client import LLMFormatError
+from db_assistant.pipeline.orchestrator import (
+    ANSWERED,
+    DECLINED,
+    ERROR,
+    FAILED,
+    LLM_FORMAT,
+    LLM_NOT_RUNNING,
+    NEEDS_CLARIFICATION,
+    Result,
+)
 from db_assistant.pipeline.repair import Attempt
 
 # tests/eval is not a package, so load run_eval.py by path.
@@ -90,7 +100,7 @@ def test_scope_case_that_flips_between_runs_fails():
     case = {"question": "q", "expected": "in_scope"}
     assert run_eval.grade_scope_case(case, ["in_scope"] * 5) == []
     problems = run_eval.grade_scope_case(case, ["in_scope", "sensitive", "in_scope"])
-    assert problems and "sensitive x1" in problems[0]
+    assert problems == [("judgment", "expected in_scope every time, got in_scope x2, sensitive x1")]
 
 
 def test_answer_case_checks_status_clarification_repair_and_answer_text():
@@ -113,10 +123,38 @@ def test_answer_case_checks_status_clarification_repair_and_answer_text():
     assert run_eval.grade_answer_case(case, good, asked_clarification=True) == []
 
     bare = Result(status=ANSWERED, answer="Five.", rows=[[5]], attempts=[Attempt("good", None)])
-    assert len(run_eval.grade_answer_case(case, bare, asked_clarification=False)) == 4
+    labels = [label for label, _ in run_eval.grade_answer_case(case, bare, asked_clarification=False)]
+    assert labels == ["judgment", "sql", "judgment", "answer"]  # clarification, repair, broadened, text
 
     declined = Result(status=DECLINED, answer="Sorry.")
     assert run_eval.grade_answer_case({"expect": {"value": 5}}, declined, False)
 
     unexpected_follow_up = Result(status=NEEDS_CLARIFICATION, answer="Which one?")
     assert run_eval.grade_answer_case({"expect": {"value": 5}}, unexpected_follow_up, True)
+
+
+def labels_for(result, expect=None):
+    case = {"expect": expect or {"value": 5}}
+    return [label for label, _ in run_eval.grade_answer_case(case, result, asked_clarification=False)]
+
+
+def test_failures_are_labelled_by_kind():
+    assert labels_for(Result(status=ANSWERED, answer="Six.", rows=[[6]])) == ["sql"]
+    assert labels_for(Result(status=FAILED, answer="Couldn't.", error="no such column")) == ["sql"]
+    assert labels_for(Result(status=DECLINED, answer="Sorry.")) == ["judgment"]
+    assert labels_for(Result(status=NEEDS_CLARIFICATION, answer="Which one?")) == ["judgment"]
+    assert labels_for(Result(status=ERROR, answer="Unreadable.", error_kind=LLM_FORMAT)) == ["format"]
+    assert labels_for(Result(status=ERROR, answer="Ollama down.", error_kind=LLM_NOT_RUNNING)) == ["setup"]
+    wording = Result(status=ANSWERED, answer="Five orders.", rows=[[5]])
+    assert labels_for(wording, {"value": 5, "answer_contains": ["July"]}) == ["answer"]
+
+
+def test_exceptions_are_labelled_format_or_setup():
+    assert run_eval.error_problem(LLMFormatError("not JSON"))[0] == "format"
+    assert run_eval.error_problem(RuntimeError("boom"))[0] == "setup"
+
+
+def test_label_counts_lists_labels_in_a_fixed_order():
+    problems = [("sql", "a"), ("format", "b"), ("sql", "c")]
+    assert run_eval.label_counts(problems) == "format 1, sql 2"
+    assert run_eval.label_counts([]) == ""

@@ -8,7 +8,8 @@
   6. Format:   the LLM writes the answer; the SQL is cited as it ran
 
 Everything a caller needs to display is on the Result, so the UI holds no
-pipeline logic. Failures (no API key, MCP server down, LLM errors) come back
+pipeline logic. Failures (no API key, Ollama not running or model missing,
+MCP server down, LLM errors) come back
 as a Result with status ERROR and a friendly message, not as exceptions.
 """
 
@@ -17,7 +18,15 @@ from dataclasses import dataclass, field
 import anyio
 
 from db_assistant import config
-from db_assistant.llm.client import LLMError, LLMNotConfigured, LLMRefusal
+from db_assistant.llm.client import (
+    LLMContextTooSmall,
+    LLMError,
+    LLMFormatError,
+    LLMModelMissing,
+    LLMNotConfigured,
+    LLMRefusal,
+    LLMServerDown,
+)
 from db_assistant.pipeline import mcp_client
 from db_assistant.pipeline.answer import write_answer
 from db_assistant.pipeline.clarify import check_ambiguity, with_clarification
@@ -38,7 +47,11 @@ FAILED = "failed"  # the query still failed after the last repair
 ERROR = "error"  # something outside the pipeline failed; see error_kind
 
 # error_kind values for status ERROR.
-MISSING_API_KEY = "missing_api_key"
+MISSING_API_KEY = "missing_api_key"  # anthropic
+LLM_NOT_RUNNING = "llm_not_running"  # ollama: server not reachable
+MODEL_NOT_FOUND = "model_not_found"  # ollama: model not pulled/created
+CONTEXT_TOO_SMALL = "context_too_small"  # ollama: num_ctx too small for the prompt
+LLM_FORMAT = "llm_format"  # the reply wasn't the requested JSON, or was cut off
 MCP_UNAVAILABLE = "mcp_unavailable"
 LLM_ERROR = "llm_error"
 
@@ -65,7 +78,7 @@ class Result:
     rows: list = field(default_factory=list)
     truncated: bool = False
     error: str | None = None  # technical detail for FAILED or ERROR
-    error_kind: str | None = None  # for ERROR: MISSING_API_KEY, MCP_UNAVAILABLE or LLM_ERROR
+    error_kind: str | None = None  # for ERROR: one of the error_kind values above
     attempts: list = field(default_factory=list)  # every Attempt, in order
     scope_note: str | None = None  # set whenever a repair broadened the question
     data_note: str | None = None  # set when the question's data doesn't exist, with the date range
@@ -208,6 +221,27 @@ def error_result(error):
     if isinstance(error, LLMNotConfigured):
         kind = MISSING_API_KEY
         message = "I can't reach the language model: no valid Anthropic API key is configured."
+    elif isinstance(error, LLMServerDown):
+        kind = LLM_NOT_RUNNING
+        message = (
+            "I can't reach the local language model: the Ollama server isn't running. "
+            "Start the Ollama app (or run `ollama serve`), then ask again."
+        )
+    elif isinstance(error, LLMModelMissing):
+        kind = MODEL_NOT_FOUND
+        message = (
+            f"The language model `{config.MODEL}` isn't installed in Ollama. "
+            "See the details below for the commands to install it."
+        )
+    elif isinstance(error, LLMContextTooSmall):
+        kind = CONTEXT_TOO_SMALL
+        message = (
+            "The local language model's context window is too small for this request. "
+            "See the details below for how to fix it."
+        )
+    elif isinstance(error, LLMFormatError):
+        kind = LLM_FORMAT
+        message = "The language model's reply couldn't be read. Please try again, or rephrase the question."
     elif isinstance(error, mcp_client.ServerUnavailable):
         kind = MCP_UNAVAILABLE
         message = "I can't reach the database server right now, so I can't answer questions."

@@ -17,6 +17,7 @@ from db_assistant.pipeline.orchestrator import (
     DECLINED,
     ERROR,
     FAILED,
+    LLM_NOT_RUNNING,
     MISSING_API_KEY,
     NEEDS_CLARIFICATION,
     Result,
@@ -82,7 +83,7 @@ def test_sidebar_shows_tables_model_examples_and_reset(app):
     at, _ = app()
     sidebar_text = [element.value for element in at.sidebar.markdown]
     assert "`customers`, `products`, `orders`, `order_items`" in sidebar_text
-    assert f"`{config.MODEL}`" in sidebar_text
+    assert any(text.startswith(f"`{config.MODEL}` (") for text in sidebar_text)
     labels = [button.label for button in at.sidebar.button]
     assert "Who are our best customers?" in labels
     assert "List the orders placed in December 2024" in labels
@@ -235,8 +236,9 @@ def test_failed_after_repairs_is_an_error_with_the_trace(app):
 
 def test_missing_api_key_shows_a_friendly_error_through_the_real_orchestrator(monkeypatch):
     # The real answer_question, with no key: no API call, no traceback.
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.setattr(llm_client, "load_dotenv", lambda *args, **kwargs: None)
+    monkeypatch.setattr(config, "LLM_PROVIDER", config.ANTHROPIC)
+    monkeypatch.setattr(config, "LLM_BASE_URL", None)
+    monkeypatch.setattr(config, "LLM_API_KEY", None)
     monkeypatch.setattr(orchestrator, "list_allowed_tables", lambda server=None: ["customers"])
     at = AppTest.from_file(APP).run()
 
@@ -246,6 +248,23 @@ def test_missing_api_key_shows_a_friendly_error_through_the_real_orchestrator(mo
     assert result.status == ERROR and result.error_kind == MISSING_API_KEY
     assert "no valid Anthropic API key" in at.error[0].value
     assert "ANTHROPIC_API_KEY is not set" in [element.value for element in at.caption][-1]
+    assert not at.exception
+
+
+def test_ollama_not_running_shows_a_friendly_error_through_the_real_orchestrator(monkeypatch):
+    # Nothing listens on port 9: a real "connection refused", no network needed.
+    monkeypatch.setattr(config, "LLM_PROVIDER", config.OLLAMA)
+    monkeypatch.setattr(config, "LLM_BASE_URL", "http://127.0.0.1:9")
+    monkeypatch.setattr(orchestrator, "list_allowed_tables", lambda server=None: ["customers"])
+    at = AppTest.from_file(APP).run()
+
+    ask(at, "How many orders were placed in July 2025?")
+
+    result = at.session_state.messages[-1]["result"]
+    assert result.status == ERROR and result.error_kind == LLM_NOT_RUNNING
+    assert "Ollama server isn't running" in at.error[0].value
+    assert "http://127.0.0.1:9" in [element.value for element in at.caption][-1]
+    assert "API key" not in at.error[0].value
     assert not at.exception
 
 

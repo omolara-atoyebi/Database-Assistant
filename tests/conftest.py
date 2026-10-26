@@ -25,14 +25,14 @@ class FakeLLM:
         self.replies = list(replies)
         self.calls = []
 
-    def complete(self, system, user_message):
-        return self._next({"system": system, "user_message": user_message})
+    def complete(self, system, user_message, think=True):
+        return self._next({"system": system, "user_message": user_message, "think": think})
 
-    def complete_json(self, system, user_message, schema):
+    def complete_json(self, system, user_message, schema, think=False):
         # Scripted replies for this method are dicts, as the real client returns.
-        return self._next({"system": system, "user_message": user_message, "schema": schema})
+        return self._next({"system": system, "user_message": user_message, "schema": schema, "think": think})
 
-    def complete_with_tools(self, system, user_message, tools, call_tool, schema, max_tool_calls):
+    def complete_with_tools(self, system, user_message, tools, call_tool, schema, max_tool_calls, think=True):
         """Scripted reply: a dict, optionally with "tool_calls": [{"name", "input"}].
 
         The scripted tool calls are really run through call_tool (so through

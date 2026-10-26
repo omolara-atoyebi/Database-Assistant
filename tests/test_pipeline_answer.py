@@ -105,3 +105,41 @@ def test_answer_instructions_limit_schema_talk_to_structure_questions():
     prompt = " ".join(answer.INSTRUCTIONS.split())
     assert "state them exactly from the descriptions, not from the rows" in prompt
     assert "Otherwise do not mention the schema" in prompt
+
+
+# --- Rows sent to the answer step -------------------------------------------------
+
+def query_result(row_count, truncated=False):
+    return {
+        "columns": ["id"],
+        "rows": [[number] for number in range(row_count)],
+        "row_count": row_count,
+        "truncated": truncated,
+    }
+
+
+def test_answer_step_sees_at_most_answer_row_limit_rows_and_is_told_the_total(monkeypatch):
+    monkeypatch.setattr(answer.config, "ANSWER_ROW_LIMIT", 50)
+    message = answer.build_user_message("q", "SELECT id FROM orders", query_result(200, truncated=True))
+
+    assert "Rows (showing 50 of 200):" in message
+    assert "\n49\n" in message and "\n50\n" not in message  # rows 0-49 only
+    assert "returned 200 rows, but you are shown only the first 50" in message
+    assert "truncated to the first 200 rows" in message  # the server's own limit, still reported
+
+
+def test_small_results_are_sent_whole_without_a_partial_note():
+    message = answer.build_user_message("q", "SELECT id FROM orders", query_result(3))
+
+    assert "Rows (showing 3 of 3):" in message
+    assert "you are shown only" not in message
+
+
+def test_answer_instructions_forbid_claims_about_unseen_rows():
+    assert "do not state totals, counts" in answer.INSTRUCTIONS
+
+
+def test_answer_step_runs_without_thinking(fake_llm):
+    llm = fake_llm(["It is 5."])
+    answer.write_answer(llm, "q", "SELECT 5", query_result(1))
+    assert llm.calls[0]["think"] is False

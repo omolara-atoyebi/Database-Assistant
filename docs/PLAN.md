@@ -17,6 +17,7 @@ phase only after it has been confirmed working.
 - [x] Phase 9: Evaluation set
 - [x] Phase 10a: Orchestrator support for the UI (steps, suggestions, friendly errors)
 - [ ] Phase 10b: Streamlit UI
+- [ ] Phase 11: Offline runtime LLM (local Ollama `qwen3:14b`, switchable with Claude via `.env`)
 
 ## Context
 
@@ -34,7 +35,10 @@ Database-Assistant/
 ├── CLAUDE.md                  Instructions for Claude Code (dev tool, not product)
 ├── README.md                  What the project is and how to run it
 ├── .gitignore                 Ignores .env, .venv/, .DS_Store, __pycache__/, caches
-├── .env.example               Template for .env (ANTHROPIC_API_KEY=...), safe to commit
+├── .env.example               Template for .env (LLM provider, model, keys), safe to commit
+├── .streamlit/config.toml     Streamlit settings: usage statistics off (offline)
+├── ollama/
+│   └── Modelfile              qwen3:14b with a 16k context (ollama create qwen3-14b-16k ...)
 ├── .mcp.json                  Registers our MCP server with Claude Code for manual testing
 ├── pyproject.toml             Dependencies (anthropic, mcp, streamlit, pytest) and pytest config
 ├── data/
@@ -52,7 +56,7 @@ Database-Assistant/
 │   │   └── server.py          MCP entry point: tools list_tables, describe_table, run_query
 │   ├── llm/
 │   │   ├── __init__.py
-│   │   └── client.py          The only module that talks to the Anthropic API (swap point)
+│   │   └── client.py          The only module that talks to the runtime LLM: Ollama or Anthropic (swap point)
 │   ├── pipeline/              The workflow (phases 5-8)
 │   │   ├── __init__.py
 │   │   ├── schema_context.py  Builds the schema text: tables, keys, types, value lists
@@ -72,10 +76,11 @@ Database-Assistant/
     ├── test_guardrails.py     Unsafe SQL rejected, safe SQL allowed
     ├── test_database.py       Read-only access, row limit, timeout
     ├── test_mcp_tools.py      The three MCP tools return the right shapes and errors
+    ├── test_llm_client.py     JSON parsing, retries, tool limit, Ollama context checks (no API calls)
     ├── test_pipeline_*.py     Each pipeline step tested with the fake LLM (no API calls)
     └── eval/
         ├── questions.yaml     Real questions with expected answers
-        └── run_eval.py        Runs them end-to-end against the real API, prints a score
+        └── run_eval.py        Runs them end-to-end against the configured LLM, prints a labelled score
 ```
 
 ### Guardrail design
@@ -268,3 +273,30 @@ text and the cited SQL already show the limit.
   - a repair case shows the repair trace
   - missing API key shows a friendly error
   - the example buttons work and "New conversation" resets everything
+### Phase 11: Offline runtime LLM (Ollama)
+- **Goal:** the app runs fully offline on a local model (`qwen3:14b` via
+  Ollama's Anthropic-compatible API), and switches back to Claude by `.env`
+  alone (`LLM_PROVIDER`, `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`).
+- **Files:** `config.py`, `llm/client.py` (all provider differences),
+  `pipeline/answer.py` (row cap, thinking off), `pipeline/orchestrator.py`
+  (friendly errors), `tests/eval/run_eval.py` (labels), `ollama/Modelfile`,
+  `.streamlit/config.toml`, `.env.example`.
+- **Ollama's compat API ignores** `output_config.format`, `output_config.effort`
+  and `tool_choice: none` (tested on Ollama 0.40.11). Replacements in the client:
+  - JSON schema in the system prompt; tolerant parsing (`parse_json_reply`)
+    with schema checks and one retry. Ollama's native `format` was tested too
+    (equally reliable on the scope gate) but stopped the model calling
+    `describe_table` during repair, so it is not used.
+  - A tool call past the limit is answered with an error, not run.
+  - Thinking per step: off for scope, clarify and answer; on for generate
+    and repair.
+- **Context:** Ollama's default is 4096 and it truncates silently; the answer
+  prompt with 200 rows was ~9.5k tokens. The model is built with
+  `num_ctx 16384`; the client checks it at startup and estimates every
+  prompt's size. The answer step sees at most `ANSWER_ROW_LIMIT` (50) rows and
+  is told the total.
+- **Errors:** Ollama not running, model not installed, context too small and
+  unreadable replies each get their own friendly message and `error_kind`.
+- **Eval:** failures labelled `format`, `judgment`, `sql`, `answer`, `setup`.
+- **Done when** (with Wi-Fi off): the CLI, the UI and the eval all run; the
+  setup errors show the Ollama messages, not "missing API key".

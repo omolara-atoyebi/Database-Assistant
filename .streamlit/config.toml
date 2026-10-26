@@ -1,0 +1,4 @@
+# Run the UI from the project root so Streamlit finds this file.
+[browser]
+# Streamlit sends usage statistics by default; the app must run fully offline.
+gatherUsageStats = false

@@ -15,8 +15,36 @@ Requires Python 3.10+.
 /opt/homebrew/bin/python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev,ui]"
-cp .env.example .env        # put ANTHROPIC_API_KEY in .env
+cp .env.example .env        # choose the LLM provider
 ```
+
+### Runtime LLM: local Ollama (default) or Claude
+
+The runtime LLM is chosen in `.env` (see `.env.example`), with no code change:
+
+- `LLM_PROVIDER=ollama` (default): `qwen3:14b` through Ollama's
+  Anthropic-compatible API at `http://localhost:11434`. Runs fully offline.
+- `LLM_PROVIDER=anthropic`: Claude through the Anthropic API; needs
+  `ANTHROPIC_API_KEY` and internet.
+
+`LLM_BASE_URL`, `LLM_API_KEY` and `LLM_MODEL` override the defaults.
+
+One-time Ollama setup (needs internet once, for the download):
+
+```bash
+ollama pull qwen3:14b
+ollama create qwen3-14b-16k -f ollama/Modelfile   # 16k context; no download
+python -m db_assistant.llm.client                 # check: prints the reply "hello"
+```
+
+Ollama's default context is 4096 tokens and it cuts longer prompts off
+silently, so the app uses `qwen3-14b-16k` (built from `ollama/Modelfile`) and
+refuses to start with a model whose context is smaller than
+`OLLAMA_MIN_CONTEXT` in `config.py`.
+
+Offline, nothing else needs the internet: the MCP server is a local process,
+and Streamlit's usage statistics are switched off in `.streamlit/config.toml`
+(run the UI from the project root so it is picked up).
 
 ## Run the UI
 
@@ -28,11 +56,12 @@ Opens a chat page in the browser. The sidebar has example questions (clear,
 ambiguous, out of scope, sensitive, and one that triggers a repair) and a
 "New conversation" button.
 
-To see the missing-key error, start it with an empty key (overrides `.env`
-for this run only):
+To see the setup errors, override `.env` for one run:
 
 ```bash
-ANTHROPIC_API_KEY= streamlit run db_assistant/ui/app.py
+LLM_BASE_URL=http://127.0.0.1:9 streamlit run db_assistant/ui/app.py   # Ollama not running
+LLM_MODEL=nope:1b streamlit run db_assistant/ui/app.py                 # model not installed
+LLM_PROVIDER=anthropic ANTHROPIC_API_KEY= streamlit run db_assistant/ui/app.py   # missing key
 ```
 
 ## Command line
@@ -47,9 +76,13 @@ python -m db_assistant.cli --first-sql "SELECT SUM(revenue) FROM orders" "What i
 ## Tests and evaluation
 
 ```bash
-pytest                                 # offline: no API calls
-python tests/eval/run_eval.py          # real API: answer quality + scope consistency
+pytest                                 # offline: no LLM calls, Ollama not needed
+python tests/eval/run_eval.py          # configured LLM: answer quality + scope consistency
 ```
+
+Eval failures are labelled `format` (reply wasn't the requested JSON or was
+cut off), `judgment` (scope, clarification, broadening), `sql` (wrong rows,
+failed after repairs), `answer` (expected text missing) or `setup`.
 
 ## MCP server
 

@@ -226,7 +226,8 @@ def render_sidebar():
             st.error("Can't reach the database server. Retrying on your next action.")
 
         st.subheader("Model")
-        st.markdown(f"`{config.MODEL}`")
+        where = "local, via Ollama" if config.LLM_PROVIDER == config.OLLAMA else "via the Anthropic API"
+        st.markdown(f"`{config.MODEL}` ({where})")
 
         st.subheader("Examples")
         for label, question in EXAMPLES:
